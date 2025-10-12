@@ -12,7 +12,7 @@ logging.getLogger("telebot").setLevel(logging.CRITICAL)
 logging.getLogger("telebot.apihelper").setLevel(logging.CRITICAL)
 telebot.logger.disabled = True
 
-TOKEN_FILES = ["token1.txt", "token2.txt", "token3.txt", "uploaded_tokens.txt"]
+TOKEN_FILES = ["token1.txt", "tfinalbots_valid.txt", "token3.txt", "uploaded_tokens.txt"]
 CONFIG_FILE = "config.txt"
 USER_IDS_FILE = "user_ids.txt"
 UPLOAD_DIR = "uploads"
