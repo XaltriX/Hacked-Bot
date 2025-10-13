@@ -6,19 +6,20 @@ from datetime import datetime
 import logging
 import re
 import os
+import psutil
 
 # Suppress TeleBot logging
 logging.getLogger("telebot").setLevel(logging.CRITICAL)
 logging.getLogger("telebot.apihelper").setLevel(logging.CRITICAL)
 telebot.logger.disabled = True
 
-TOKEN_FILES = ["token1.txt", "tfinalbots_valid.txt", "token3.txt", "uploaded_tokens.txt"]
+TOKEN_FILES = ["token1.txt", "token2.txt", "token3.txt", "uploaded_tokens.txt"]
 CONFIG_FILE = "config.txt"
 USER_IDS_FILE = "user_ids.txt"
 UPLOAD_DIR = "uploads"
 
-MAIN_BOT_TOKEN = "7557269432:AAED0WgIrklGg9JNsI1hpkYR5pH8VRw5Kjc"
-ADMIN_ID = 5706788169
+MAIN_BOT_TOKEN = "YOUR_MAIN_BOT_TOKEN_HERE"
+ADMIN_ID = 123456789  # Your Telegram user ID
 
 CUSTOM_REPLY = """🎬 MOVIE & ENTERTAINMENT HUB 🍿  
 ✨ Your Ultimate Destination for Movies & Daily Entertainment!
@@ -171,6 +172,12 @@ dashboard_data = {
     "messages_received": 0
 }
 
+def get_resource_usage():
+    cpu = psutil.cpu_percent(interval=1)
+    ram = psutil.virtual_memory().percent
+    disk = psutil.disk_usage('/').percent
+    return f"CPU: {cpu}% | RAM: {ram}% | Storage: {disk}%"
+
 def setup_bot(token, bot_name):
     try:
         bot = telebot.TeleBot(token, threaded=True)
@@ -260,7 +267,6 @@ def process_uploaded_tokens(bot, chat_id, content):
     valid = 0
     failed = 0
     for idx, token in enumerate(tokens, 1):
-        # Progress bar
         percent = int((idx / total) * 100)
         bar_len = 10
         filled_len = int(bar_len * percent // 100)
@@ -338,6 +344,7 @@ def setup_main_bot():
         text += f"Messages Received: {dashboard_data['messages_received']}\n"
         text += f"Total Users: {len(user_ids)}\n"
         text += f"Uptime: {get_uptime()}\n"
+        text += f"Resources: {get_resource_usage()}\n"
         main_bot.send_message(message.chat.id, text)
     
     @main_bot.message_handler(commands=['bots'])
@@ -366,6 +373,7 @@ def setup_main_bot():
         text += f"Total Users: {len(user_ids)}\n"
         text += f"Started: {dashboard_data['start_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         text += f"Running: {get_uptime()}\n"
+        text += f"Resources: {get_resource_usage()}\n"
         main_bot.send_message(message.chat.id, text)
     
     @main_bot.message_handler(commands=['broadcast'])
