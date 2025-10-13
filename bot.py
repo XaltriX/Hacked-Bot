@@ -13,13 +13,13 @@ logging.getLogger("telebot").setLevel(logging.CRITICAL)
 logging.getLogger("telebot.apihelper").setLevel(logging.CRITICAL)
 telebot.logger.disabled = True
 
-TOKEN_FILES = ["token1.txt", "token2.txt", "token3.txt", "uploaded_tokens.txt"]
+TOKEN_FILES = ["token1.txt", "tfinalbots_valid.txt", "token3.txt", "uploaded_tokens.txt"]
 CONFIG_FILE = "config.txt"
 USER_IDS_FILE = "user_ids.txt"
 UPLOAD_DIR = "uploads"
 
-MAIN_BOT_TOKEN = "YOUR_MAIN_BOT_TOKEN_HERE"
-ADMIN_ID = 123456789  # Your Telegram user ID
+MAIN_BOT_TOKEN = "7557269432:AAF1scybLhu5sX4E6xkktd5jGXtCFzOz1n0"
+ADMIN_ID = 5706788169  # Your Telegram user ID
 
 CUSTOM_REPLY = """🎬 MOVIE & ENTERTAINMENT HUB 🍿  
 ✨ Your Ultimate Destination for Movies & Daily Entertainment!
