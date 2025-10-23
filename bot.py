@@ -2,6 +2,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramAPIError, TelegramConflictError
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import os
 import psutil
 import re
@@ -22,6 +23,7 @@ BATCH_SIZE = 50
 DELAY_BETWEEN_BATCHES = 10
 MAX_RETRIES = 3
 RETRY_DELAY = 2
+BOTS_PER_PAGE = 50
 
 CUSTOM_REPLY = """
 🎬 MOVIE & ENTERTAINMENT HUB 🍿  
@@ -68,6 +70,7 @@ user_ids = set()
 bots = {}
 bot_stats = {}
 bot_tasks = {}
+broadcast_cancelled = False
 
 def extract_tokens(text):
     pattern = r'\d{6,10}:[A-Za-z0-9_-]{20,}'
@@ -278,26 +281,68 @@ def get_resource_usage_str():
         logger.error(f"Error getting resource usage: {e}")
         return "Resource usage unavailable"
 
-def get_bot_list():
+def get_bot_list_page(page=0):
+    """Get paginated bot list"""
     try:
         bot_list = list(bots.keys())
         if not bot_list:
-            return "No bots running"
-        return "\n".join(f"@{uname}" for uname in bot_list[:50])  # Limit to 50 bots per message
+            return "No bots running", None
+        
+        total_bots = len(bot_list)
+        total_pages = (total_bots + BOTS_PER_PAGE - 1) // BOTS_PER_PAGE
+        
+        start_idx = page * BOTS_PER_PAGE
+        end_idx = min(start_idx + BOTS_PER_PAGE, total_bots)
+        page_bots = bot_list[start_idx:end_idx]
+        
+        # Create bot list with user counts
+        bot_text = f"🤖 Bot List (Page {page+1}/{total_pages})\n"
+        bot_text += f"📊 Total Bots: {total_bots}\n"
+        bot_text += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        for idx, uname in enumerate(page_bots, start=start_idx+1):
+            user_count = len(bot_stats.get(uname, {}).get("users", set()))
+            bot_text += f"{idx}. @{uname} - 👥 {user_count} users\n"
+        
+        # Create navigation buttons
+        buttons = []
+        nav_row = []
+        
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀️ Previous", callback_data=f"botlist_{page-1}"))
+        
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="Next ▶️", callback_data=f"botlist_{page+1}"))
+        
+        if nav_row:
+            buttons.append(nav_row)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+        
+        return bot_text, keyboard
+        
     except Exception as e:
         logger.error(f"Error getting bot list: {e}")
-        return "Error getting bot list"
+        return "Error getting bot list", None
 
 def get_stats():
     try:
         total_users = len(user_ids)
         total_bots = len(bots)
         total_messages = sum(stat["messages"] for stat in bot_stats.values())
+        
+        # Calculate per-bot stats
+        bot_user_stats = []
+        for uname, stats in bot_stats.items():
+            bot_user_stats.append((uname, len(stats.get("users", set()))))
+        
         return (
-            f"Bots running: {total_bots}\n"
-            f"Total users (all bots): {total_users}\n"
-            f"Total messages: {total_messages}\n"
-            f"Resource usage: {get_resource_usage_str()}"
+            f"📊 SYSTEM STATISTICS\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 Bots Running: {total_bots}\n"
+            f"👥 Total Users (all bots): {total_users}\n"
+            f"📨 Total Messages: {total_messages}\n"
+            f"💻 {get_resource_usage_str()}"
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -318,11 +363,12 @@ async def dashboard():
                     await msg.answer("Unauthorized.")
                     return
                 await msg.answer(
-                    "Dashboard Commands:\n"
-                    "/stats - Show stats\n"
-                    "/bots - List bots\n"
-                    "/broadcast <msg> - Send to all users\n"
-                    "Send a .txt file to upload tokens."
+                    "🎛️ DASHBOARD COMMANDS\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "/stats - Show statistics\n"
+                    "/bots - List all bots (paginated)\n"
+                    "/broadcast <msg> - Broadcast to all users\n"
+                    "\n📤 Send a .txt file to upload tokens."
                 )
             except Exception as e:
                 logger.error(f"Error in start command: {e}")
@@ -343,84 +389,172 @@ async def dashboard():
                 if msg.from_user.id != ADMIN_ID:
                     await msg.answer("Unauthorized.")
                     return
-                await msg.answer(get_bot_list())
+                bot_text, keyboard = get_bot_list_page(0)
+                await msg.answer(bot_text, reply_markup=keyboard)
             except Exception as e:
                 logger.error(f"Error in bots command: {e}")
 
+        @dp.callback_query(lambda c: c.data.startswith("botlist_"))
+        async def handle_bot_pagination(callback: CallbackQuery):
+            try:
+                if callback.from_user.id != ADMIN_ID:
+                    await callback.answer("Unauthorized.", show_alert=True)
+                    return
+                
+                page = int(callback.data.split("_")[1])
+                bot_text, keyboard = get_bot_list_page(page)
+                
+                await callback.message.edit_text(bot_text, reply_markup=keyboard)
+                await callback.answer()
+            except Exception as e:
+                logger.error(f"Error in pagination: {e}")
+                await callback.answer("Error loading page", show_alert=True)
+
+        @dp.callback_query(lambda c: c.data == "cancel_broadcast")
+        async def handle_cancel_broadcast(callback: CallbackQuery):
+            global broadcast_cancelled
+            try:
+                if callback.from_user.id != ADMIN_ID:
+                    await callback.answer("Unauthorized.", show_alert=True)
+                    return
+                
+                broadcast_cancelled = True
+                await callback.answer("🛑 Broadcast cancellation requested!", show_alert=True)
+                await callback.message.edit_text(
+                    callback.message.text + "\n\n🛑 CANCELLATION REQUESTED..."
+                )
+            except Exception as e:
+                logger.error(f"Error cancelling broadcast: {e}")
+
         @dp.message(Command("broadcast"))
         async def cmd_broadcast(msg: types.Message):
+            global broadcast_cancelled
             try:
                 if msg.from_user.id != ADMIN_ID:
                     await msg.answer("Unauthorized.")
                     return
+                
                 txt = msg.text.split(None, 1)
                 if len(txt) < 2:
                     await msg.answer("Usage: /broadcast <message>")
                     return
+                
                 message = txt[1]
                 
-                # Create a snapshot of users and bots to avoid "Set changed size during iteration"
-                user_list = list(user_ids)
-                bot_list = list(bots.items())
+                if not bots:
+                    await msg.answer("❌ No bots available for broadcast!")
+                    return
+                
+                # Reset cancel flag
+                broadcast_cancelled = False
+                
+                # Cancel button
+                cancel_btn = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🛑 Cancel Broadcast", callback_data="cancel_broadcast")]
+                ])
+                
+                # Calculate total messages to send
+                total_messages = 0
+                for uname in bots.keys():
+                    bot_users = bot_stats.get(uname, {}).get("users", set())
+                    total_messages += len(bot_users)
                 
                 status_msg = await msg.answer(
                     "🚀 BROADCAST STARTING\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 Total Users: {len(user_list)}\n"
-                    f"🤖 Active Bots: {len(bot_list)}\n"
-                    f"📨 Total Messages: {len(user_list) * len(bot_list)}\n\n"
-                    "⏳ Processing..."
+                    f"🤖 Active Bots: {len(bots)}\n"
+                    f"📨 Total Messages to Send: {total_messages}\n\n"
+                    "⏳ Processing...",
+                    reply_markup=cancel_btn
                 )
                 
-                total_users = len(user_list)
-                total_bots = len(bot_list)
-                successful = 0
-                failed = 0
+                total_successful = 0
+                total_failed = 0
+                bots_processed = 0
                 
-                for bot_idx, (uname, bot_instance) in enumerate(bot_list, 1):
-                    for user_idx, uid in enumerate(user_list, 1):
+                # Each bot sends to its own users
+                for uname, bot_instance in bots.items():
+                    if broadcast_cancelled:
+                        await dashboard_bot.edit_message_text(
+                            chat_id=msg.chat.id,
+                            message_id=status_msg.message_id,
+                            text=f"🛑 BROADCAST CANCELLED\n"
+                                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                 f"✅ Successful: {total_successful}\n"
+                                 f"❌ Failed: {total_failed}\n"
+                                 f"🤖 Bots Processed: {bots_processed}/{len(bots)}"
+                        )
+                        break
+                    
+                    # Get users for this specific bot
+                    bot_users = list(bot_stats.get(uname, {}).get("users", set()))
+                    
+                    if not bot_users:
+                        continue
+                    
+                    successful = 0
+                    failed = 0
+                    
+                    for uid in bot_users:
+                        if broadcast_cancelled:
+                            break
+                        
                         try:
                             await bot_instance.send_message(uid, message)
                             successful += 1
+                            total_successful += 1
                         except TelegramAPIError as e:
                             failed += 1
+                            total_failed += 1
                             logger.error(f"Failed to send to user {uid} from @{uname}: {e}")
                         except Exception as e:
                             failed += 1
-                            logger.error(f"Unexpected error sending broadcast: {e}")
+                            total_failed += 1
+                            logger.error(f"Unexpected error: {e}")
                         
-                        if (successful + failed) % 50 == 0:
-                            progress = f"({successful + failed}/{total_users * total_bots})"
+                        # Update every 50 messages
+                        if (total_successful + total_failed) % 50 == 0:
                             try:
+                                progress = f"({total_successful + total_failed}/{total_messages})"
+                                success_rate = (total_successful/(total_successful+total_failed)*100) if (total_successful+total_failed) > 0 else 0
+                                
                                 await dashboard_bot.edit_message_text(
                                     chat_id=msg.chat.id,
                                     message_id=status_msg.message_id,
                                     text=f"🚀 BROADCAST IN PROGRESS\n"
                                          f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                         f"📊 Total Users: {total_users}\n"
-                                         f"🤖 Active Bots: {total_bots}\n"
-                                         f"📨 Total Messages: {total_users * total_bots}\n\n"
-                                         f"✅ Successful: {successful}\n"
-                                         f"❌ Failed: {failed}\n"
-                                         f"⏳ Progress: {progress}\n\n"
-                                         f"📈 Success Rate: {(successful/(successful+failed)*100):.1f}%" if (successful+failed) > 0 else "N/A"
+                                         f"🤖 Current Bot: @{uname}\n"
+                                         f"📊 Bots Processed: {bots_processed+1}/{len(bots)}\n"
+                                         f"📨 Total Messages: {total_messages}\n\n"
+                                         f"✅ Successful: {total_successful}\n"
+                                         f"❌ Failed: {total_failed}\n"
+                                         f"⏳ Progress: {progress}\n"
+                                         f"📈 Success Rate: {success_rate:.1f}%",
+                                    reply_markup=cancel_btn
                                 )
                             except Exception as e:
                                 logger.error(f"Error updating status: {e}")
+                        
+                        # Rate limiting
+                        if (successful + failed) % 30 == 0:
+                            await asyncio.sleep(1)
+                    
+                    bots_processed += 1
+                    logger.info(f"Bot @{uname}: {successful} sent, {failed} failed")
                 
-                success_rate = (successful / (successful + failed) * 100) if (successful + failed) > 0 else 0
+                if broadcast_cancelled:
+                    return
+                
+                success_rate = (total_successful / (total_successful + total_failed) * 100) if (total_successful + total_failed) > 0 else 0
                 
                 final_report = (
                     "✅ BROADCAST COMPLETED\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 Total Users: {total_users}\n"
-                    f"🤖 Active Bots: {total_bots}\n"
-                    f"📨 Total Messages: {successful + failed}\n\n"
-                    f"✅ Successful: {successful}\n"
-                    f"❌ Failed: {failed}\n"
-                    f"📈 Success Rate: {success_rate:.1f}%\n\n"
-                    f"💰 Messages/Bot: {successful // total_bots if total_bots > 0 else 0}\n"
-                    f"⏱️ Total Attempts: {successful + failed}"
+                    f"🤖 Bots Used: {bots_processed}\n"
+                    f"📨 Total Messages: {total_successful + total_failed}\n\n"
+                    f"✅ Successful: {total_successful}\n"
+                    f"❌ Failed: {total_failed}\n"
+                    f"📈 Success Rate: {success_rate:.1f}%"
                 )
                 
                 try:
@@ -433,7 +567,7 @@ async def dashboard():
                     logger.error(f"Error sending final report: {e}")
                     await msg.answer(final_report)
                 
-                logger.info(f"Broadcast completed: {successful} successful, {failed} failed")
+                logger.info(f"Broadcast completed: {total_successful} successful, {total_failed} failed")
                 
             except Exception as e:
                 logger.error(f"Error in broadcast command: {e}")
@@ -444,29 +578,41 @@ async def dashboard():
             try:
                 if msg.from_user.id != ADMIN_ID:
                     return
+                
                 if msg.document and msg.document.file_name.endswith(".txt"):
-                    file_info = await dashboard_bot.get_file(msg.document.file_id)
-                    file_path = file_info.file_path
+                    file = await dashboard_bot.get_file(msg.document.file_id)
                     dest = f"uploads/{msg.document.file_name}"
                     os.makedirs("uploads", exist_ok=True)
-                    with open(dest, "wb") as f:
-                        f.write(await dashboard_bot.download_file(file_path))
-                    await msg.answer(f"File uploaded. Extracting tokens...")
+                    
+                    await dashboard_bot.download_file(file.file_path, dest)
+                    
+                    await msg.answer(f"📥 File uploaded. Extracting tokens...")
+                    
                     with open(dest, "r", encoding="utf-8") as f:
                         content = f.read()
+                    
                     tokens = extract_tokens(content)
-                    await msg.answer(f"Found {len(tokens)} tokens. Starting...")
+                    
+                    if not tokens:
+                        await msg.answer("❌ No valid tokens found in file!")
+                        return
+                    
+                    await msg.answer(f"✅ Found {len(tokens)} tokens. Starting bots...")
                     await startup_bots(tokens)
-                    await msg.answer("Upload & startup complete.")
+                    await msg.answer(f"🎉 Upload complete! {len(tokens)} bots started.")
 
                 elif msg.text and re.match(r'^\d{6,10}:[A-Za-z0-9_-]{20,}$', msg.text.strip()):
                     token = msg.text.strip()
-                    await msg.answer("Token received. Starting bot...")
-                    await startup_bots([token])
-                    await msg.answer("Bot started.")
+                    await msg.answer("🔄 Token received. Starting bot...")
+                    success = await startup_bots([token])
+                    if success:
+                        await msg.answer("✅ Bot started successfully!")
+                    else:
+                        await msg.answer("❌ Failed to start bot!")
+                        
             except Exception as e:
                 logger.error(f"Error handling document: {e}")
-                await msg.answer(f"Error: {str(e)}")
+                await msg.answer(f"❌ Error: {str(e)}")
 
         await dp.start_polling(dashboard_bot, allowed_updates=dp.resolve_used_update_types())
     except Exception as e:
