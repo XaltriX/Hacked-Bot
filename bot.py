@@ -25,46 +25,31 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2
 BOTS_PER_PAGE = 50
 
-CUSTOM_REPLY = """
+CUSTOM_REPLY_TEXT = """
 🎬 MOVIE & ENTERTAINMENT HUB 🍿  
 ✨ Your Ultimate Destination for Movies & Daily Entertainment!
 
-───────────────────────────────
+━━━━━━━━━━━━━━━━━━━━━━━━━
 
-➡️ MOVIE REQUEST GROUP 🎥  
-💬 Request your favorite movies  
-🔗 Join Now: https://t.me/MOVIE_REQUESTX
-
-───────────────────────────────
-
-➡️ DAILY DOSE OF MMS LE@K 💥  
+🎥 Request your favorite movies
 🔥 Exclusive unseen drops  
-🔗 Join Now: https://t.me/+Br0s4neTgL0xM2I8
+💎 High-quality premium content
+🌑 Rare & bold videos
+📅 Fresh movies every day
 
-───────────────────────────────
+━━━━━━━━━━━━━━━━━━━━━━━━━
 
-➡️ PREMIUM MMS LE@K C0RN 💎  
-⚡ High-quality, premium content  
-🔗 Access Now: https://t.me/+VWdELS83oeMxMWI1
-
-───────────────────────────────
-
-➡️ D@RK WEB VIE0S 🌑  
-😈 Rare & bold videos  
-🔗 Explore Now: https://t.me/+we2VaRaOfr5lM2M0
-
-───────────────────────────────
-
-➡️ NEW MOVIE DAILY 🎞️  
-📅 Fresh movies every day  
-🔗 Watch Now: https://t.me/+vkh5MVQqJzs4OGU0
-
-───────────────────────────────
-
-🌐 BONUS LINK — Full Hub Access  
-💫 All channels in one place  
-🔗 Visit Now: https://linkzwallah.netlify.app/
+👇 Click the buttons below to join! 👇
 """
+
+CUSTOM_REPLY_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🎥 Movie Request Group", url="https://t.me/MOVIE_REQUESTX")],
+    [InlineKeyboardButton(text="💥 Daily MMS Le@k", url="https://t.me/+Br0s4neTgL0xM2I8")],
+    [InlineKeyboardButton(text="💎 Premium MMS C0rn", url="https://t.me/+VWdELS83oeMxMWI1")],
+    [InlineKeyboardButton(text="🌑 D@rk Web Vide0s", url="https://t.me/+we2VaRaOfr5lM2M0")],
+    [InlineKeyboardButton(text="🎞️ New Movie Daily", url="https://t.me/+vkh5MVQqJzs4OGU0")],
+    [InlineKeyboardButton(text="🌐 Full Hub Access", url="https://linkzwallah.netlify.app/")]
+])
 
 user_ids = set()
 bots = {}
@@ -206,7 +191,7 @@ async def start_single_bot(token):
                 bot_stats[username]["messages"] += 1
                 bot_stats[username]["users"].add(msg.from_user.id)
                 save_user_id(msg.from_user.id)
-                await msg.answer(CUSTOM_REPLY)
+                await msg.answer(CUSTOM_REPLY_TEXT, reply_markup=CUSTOM_REPLY_BUTTONS)
             except TelegramAPIError as e:
                 logger.error(f"Error handling message for @{username}: {e}")
             except Exception as e:
@@ -367,6 +352,8 @@ async def dashboard():
                     "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     "/stats - Show statistics\n"
                     "/bots - List all bots (paginated)\n"
+                    "/topbots - Top 20 bots by users\n"
+                    "/gettoken @botname - Get bot token\n"
                     "/broadcast <msg> - Broadcast to all users\n"
                     "\n📤 Send a .txt file to upload tokens."
                 )
@@ -393,6 +380,114 @@ async def dashboard():
                 await msg.answer(bot_text, reply_markup=keyboard)
             except Exception as e:
                 logger.error(f"Error in bots command: {e}")
+
+        @dp.message(Command("topbots"))
+        async def cmd_topbots(msg: types.Message):
+            try:
+                if msg.from_user.id != ADMIN_ID:
+                    await msg.answer("Unauthorized.")
+                    return
+                
+                # Get all bots with their user counts
+                bot_user_counts = []
+                for uname in bots.keys():
+                    user_count = len(bot_stats.get(uname, {}).get("users", set()))
+                    bot_user_counts.append((uname, user_count))
+                
+                # Sort by user count (highest first)
+                bot_user_counts.sort(key=lambda x: x[1], reverse=True)
+                
+                if not bot_user_counts:
+                    await msg.answer("No bots running!")
+                    return
+                
+                # Show top 20 bots
+                top_bots = bot_user_counts[:20]
+                
+                text = "🏆 TOP BOTS (By Users)\n"
+                text += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                
+                for idx, (uname, count) in enumerate(top_bots, 1):
+                    medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+                    text += f"{medal} @{uname}\n   👥 {count} users\n\n"
+                
+                total_users = sum(count for _, count in bot_user_counts)
+                text += f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                text += f"📊 Total Bots: {len(bot_user_counts)}\n"
+                text += f"👥 Total Users: {total_users}"
+                
+                await msg.answer(text)
+            except Exception as e:
+                logger.error(f"Error in topbots command: {e}")
+
+        @dp.message(Command("gettoken"))
+        async def cmd_gettoken(msg: types.Message):
+            try:
+                if msg.from_user.id != ADMIN_ID:
+                    await msg.answer("Unauthorized.")
+                    return
+                
+                args = msg.text.split(None, 1)
+                if len(args) < 2:
+                    await msg.answer("❌ Usage: /gettoken @botusername\n\nExample: /gettoken @mybot")
+                    return
+                
+                # Remove @ if present
+                bot_username = args[1].strip().lstrip('@')
+                
+                # Find token from all token files
+                found_token = None
+                found_in_file = None
+                
+                for token_file in TOKEN_FILES:
+                    if not Path(token_file).exists():
+                        continue
+                    try:
+                        with open(token_file, "r", encoding="utf-8") as f:
+                            content = f.read()
+                            tokens = extract_tokens(content)
+                            
+                            # Check each token
+                            for token in tokens:
+                                bot = None
+                                try:
+                                    bot = Bot(token)
+                                    me = await bot.get_me()
+                                    if me.username.lower() == bot_username.lower():
+                                        found_token = token
+                                        found_in_file = token_file
+                                        break
+                                except:
+                                    pass
+                                finally:
+                                    if bot and bot.session and not bot.session.closed:
+                                        await bot.session.close()
+                            
+                            if found_token:
+                                break
+                    except Exception as e:
+                        logger.error(f"Error reading {token_file}: {e}")
+                
+                if found_token:
+                    user_count = len(bot_stats.get(bot_username, {}).get("users", set()))
+                    msg_count = bot_stats.get(bot_username, {}).get("messages", 0)
+                    
+                    response = (
+                        f"🔐 BOT TOKEN FOUND\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🤖 Bot: @{bot_username}\n"
+                        f"📁 File: {found_in_file}\n"
+                        f"👥 Users: {user_count}\n"
+                        f"📨 Messages: {msg_count}\n\n"
+                        f"🔑 Token:\n`{found_token}`"
+                    )
+                    await msg.answer(response, parse_mode="Markdown")
+                else:
+                    await msg.answer(f"❌ Token not found for @{bot_username}\n\nMake sure:\n1. Bot username is correct\n2. Bot is in token files\n3. Token is valid")
+                    
+            except Exception as e:
+                logger.error(f"Error in gettoken command: {e}")
+                await msg.answer(f"❌ Error: {str(e)}")
 
         @dp.callback_query(lambda c: c.data.startswith("botlist_"))
         async def handle_bot_pagination(callback: CallbackQuery):
@@ -434,12 +529,25 @@ async def dashboard():
                     await msg.answer("Unauthorized.")
                     return
                 
-                txt = msg.text.split(None, 1)
-                if len(txt) < 2:
-                    await msg.answer("Usage: /broadcast <message>")
-                    return
-                
-                message = txt[1]
+                # Check if replying to a message
+                if msg.reply_to_message:
+                    # Broadcast the replied message
+                    replied_msg = msg.reply_to_message
+                    broadcast_message = replied_msg
+                    message_type = "replied"
+                else:
+                    # Check if message text is provided
+                    txt = msg.text.split(None, 1)
+                    if len(txt) < 2:
+                        await msg.answer(
+                            "❌ Usage:\n"
+                            "1. /broadcast <message>\n"
+                            "2. Reply to any message with /broadcast"
+                        )
+                        return
+                    
+                    broadcast_message = txt[1]
+                    message_type = "text"
                 
                 if not bots:
                     await msg.answer("❌ No bots available for broadcast!")
@@ -462,6 +570,7 @@ async def dashboard():
                 status_msg = await msg.answer(
                     "🚀 BROADCAST STARTING\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📝 Type: {message_type.upper()}\n"
                     f"🤖 Active Bots: {len(bots)}\n"
                     f"📨 Total Messages to Send: {total_messages}\n\n"
                     "⏳ Processing...",
@@ -500,7 +609,38 @@ async def dashboard():
                             break
                         
                         try:
-                            await bot_instance.send_message(uid, message)
+                            # Send based on message type
+                            if message_type == "replied":
+                                # Forward the replied message content
+                                if replied_msg.text:
+                                    await bot_instance.send_message(uid, replied_msg.text)
+                                elif replied_msg.photo:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_photo(uid, replied_msg.photo[-1].file_id, caption=caption)
+                                elif replied_msg.video:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_video(uid, replied_msg.video.file_id, caption=caption)
+                                elif replied_msg.document:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_document(uid, replied_msg.document.file_id, caption=caption)
+                                elif replied_msg.audio:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_audio(uid, replied_msg.audio.file_id, caption=caption)
+                                elif replied_msg.voice:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_voice(uid, replied_msg.voice.file_id, caption=caption)
+                                elif replied_msg.animation:
+                                    caption = replied_msg.caption or ""
+                                    await bot_instance.send_animation(uid, replied_msg.animation.file_id, caption=caption)
+                                elif replied_msg.sticker:
+                                    await bot_instance.send_sticker(uid, replied_msg.sticker.file_id)
+                                else:
+                                    # Fallback to text
+                                    await bot_instance.send_message(uid, "📢 Broadcast message")
+                            else:
+                                # Send text message
+                                await bot_instance.send_message(uid, broadcast_message)
+                            
                             successful += 1
                             total_successful += 1
                         except TelegramAPIError as e:
