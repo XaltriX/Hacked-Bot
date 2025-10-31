@@ -8,6 +8,7 @@ import psutil
 import re
 from pathlib import Path
 import logging
+import gc  # Garbage collector for memory management
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,11 +20,17 @@ USER_IDS_FILE = "user_ids.txt"
 ADMIN_ID = 5706788169
 DASHBOARD_TOKEN = "7557269432:AAF1scybLhu5sX4E6xkktd5jGXtCFzOz1n0"
 
-BATCH_SIZE = 50
-DELAY_BETWEEN_BATCHES = 10
-MAX_RETRIES = 3
+BATCH_SIZE = 20  # Reduced from 50 for lower memory usage
+DELAY_BETWEEN_BATCHES = 15  # Increased delay to allow garbage collection
+MAX_RETRIES = 2  # Reduced retries
 RETRY_DELAY = 2
-BOTS_PER_PAGE = 50
+BOTS_PER_PAGE = 30  # Reduced from 50
+
+# Aggressive memory optimization for Heroku
+MAX_USER_IDS_IN_MEMORY = 5000  # Reduced from 10000
+SAVE_USER_IDS_BATCH = 50  # Reduced from 100 for faster writes
+CLEANUP_INTERVAL = 1800  # Clean up every 30 minutes instead of 1 hour
+MAX_BOTS_IN_MEMORY = 100  # Limit total bots in memory
 
 CUSTOM_REPLY_TEXT = """
 🎬 MOVIE & ENTERTAINMENT HUB 🍿  
@@ -56,35 +63,66 @@ bots = {}
 bot_stats = {}
 bot_tasks = {}
 broadcast_cancelled = False
+pending_user_ids = []  # Buffer for batch saving
 
 def extract_tokens(text):
     pattern = r'\d{6,10}:[A-Za-z0-9_-]{20,}'
     return re.findall(pattern, text)
 
 def load_user_ids():
+    """Load only limited user IDs into memory"""
     try:
         if Path(USER_IDS_FILE).exists():
             with open(USER_IDS_FILE, "r") as f:
+                count = 0
                 for line in f:
                     chat_id = line.strip()
                     if chat_id.isdigit():
                         user_ids.add(int(chat_id))
-        logger.info(f"Loaded {len(user_ids)} user IDs")
+                        count += 1
+                        # Stop loading if exceeds limit
+                        if count >= MAX_USER_IDS_IN_MEMORY:
+                            logger.warning(f"Limiting user IDs in memory to {MAX_USER_IDS_IN_MEMORY}")
+                            break
+        logger.info(f"Loaded {len(user_ids)} user IDs into memory")
     except Exception as e:
         logger.error(f"Error loading user IDs: {e}")
 
 def save_user_id(chat_id):
+    """Batch save user IDs to reduce file I/O"""
+    global pending_user_ids
     try:
         if chat_id not in user_ids:
             user_ids.add(chat_id)
-            with open(USER_IDS_FILE, "a") as f:
-                f.write(f"{chat_id}\n")
+            pending_user_ids.append(chat_id)
+            
+            # Batch save when buffer reaches threshold
+            if len(pending_user_ids) >= SAVE_USER_IDS_BATCH:
+                with open(USER_IDS_FILE, "a") as f:
+                    for uid in pending_user_ids:
+                        f.write(f"{uid}\n")
+                pending_user_ids.clear()
+                logger.info(f"Batch saved {SAVE_USER_IDS_BATCH} user IDs")
     except Exception as e:
         logger.error(f"Error saving user ID {chat_id}: {e}")
+
+def flush_pending_user_ids():
+    """Flush remaining user IDs to file"""
+    global pending_user_ids
+    try:
+        if pending_user_ids:
+            with open(USER_IDS_FILE, "a") as f:
+                for uid in pending_user_ids:
+                    f.write(f"{uid}\n")
+            logger.info(f"Flushed {len(pending_user_ids)} pending user IDs")
+            pending_user_ids.clear()
+    except Exception as e:
+        logger.error(f"Error flushing user IDs: {e}")
 
 async def delete_webhook(token):
     """Delete webhook before using polling"""
     bot = None
+    session = None
     try:
         bot = Bot(token)
         await bot.delete_webhook(drop_pending_updates=True)
@@ -104,20 +142,26 @@ async def delete_webhook(token):
         logger.error(f"Error deleting webhook: {e}")
     finally:
         if bot:
+            session = bot.session
             try:
-                if bot.session and not bot.session.closed:
-                    await bot.session.close()
+                if session and not session.closed:
+                    await session.close()
             except Exception as e:
                 logger.error(f"Error closing session: {e}")
+            finally:
+                # Clean up bot object
+                del bot
 
 async def get_bot_username(token):
     """Safely get bot username with retries"""
     for attempt in range(MAX_RETRIES):
         bot = None
+        session = None
         try:
             bot = Bot(token)
             me = await bot.get_me()
-            return me.username
+            username = me.username
+            return username
         except TelegramConflictError:
             logger.warning(f"Conflict error getting bot info (attempt {attempt+1}/{MAX_RETRIES})")
             await asyncio.sleep(RETRY_DELAY)
@@ -129,18 +173,27 @@ async def get_bot_username(token):
             return None
         finally:
             if bot:
+                session = bot.session
                 try:
-                    if bot.session and not bot.session.closed:
-                        await bot.session.close()
+                    if session and not session.closed:
+                        await session.close()
                 except Exception:
                     pass
+                finally:
+                    del bot
     return None
 
 async def startup_bots(tokens):
-    """Start bots in batches with proper error handling"""
+    """Start bots in batches with proper error handling and memory management"""
     started = 0
     failed = 0
     total = len(tokens)
+    
+    # Limit total bots if too many
+    if total > MAX_BOTS_IN_MEMORY:
+        logger.warning(f"Too many tokens ({total}), limiting to {MAX_BOTS_IN_MEMORY} for memory constraints")
+        tokens = tokens[:MAX_BOTS_IN_MEMORY]
+        total = MAX_BOTS_IN_MEMORY
     
     logger.info(f"Starting {total} bots in batches of {BATCH_SIZE}")
     
@@ -158,12 +211,18 @@ async def startup_bots(tokens):
             else:
                 failed += 1
         
+        # Force garbage collection after each batch
+        gc.collect()
+        
         logger.info(f"[{started}/{total}] bots started, {failed} failed. Sleeping {DELAY_BETWEEN_BATCHES}s...")
         print_resource_usage()
         batch_num += 1
         await asyncio.sleep(DELAY_BETWEEN_BATCHES)
     
     logger.info(f"Bot startup complete: {started} successful, {failed} failed")
+    
+    # Final garbage collection
+    gc.collect()
 
 async def start_single_bot(token):
     """Start a single bot with comprehensive error handling"""
@@ -183,14 +242,28 @@ async def start_single_bot(token):
         bot = Bot(token)
         dp = Dispatcher()
         bots[username] = bot
-        bot_stats[username] = {"messages": 0, "users": set()}
+        # Minimal stats to save memory - don't store all user IDs
+        bot_stats[username] = {"messages": 0, "user_count": 0}
+        
+        # Keep a small set for recent users only
+        recent_users = set()
         
         @dp.message()
         async def handler(msg: types.Message):
             try:
                 bot_stats[username]["messages"] += 1
-                bot_stats[username]["users"].add(msg.from_user.id)
-                save_user_id(msg.from_user.id)
+                
+                # Track user count but don't store all IDs in memory
+                user_id = msg.from_user.id
+                if user_id not in recent_users:
+                    bot_stats[username]["user_count"] += 1
+                    recent_users.add(user_id)
+                    
+                    # Keep only last 100 users in memory per bot
+                    if len(recent_users) > 100:
+                        recent_users.clear()
+                
+                save_user_id(user_id)
                 await msg.answer(CUSTOM_REPLY_TEXT, reply_markup=CUSTOM_REPLY_BUTTONS)
             except TelegramAPIError as e:
                 logger.error(f"Error handling message for @{username}: {e}")
@@ -286,7 +359,7 @@ def get_bot_list_page(page=0):
         bot_text += "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for idx, uname in enumerate(page_bots, start=start_idx+1):
-            user_count = len(bot_stats.get(uname, {}).get("users", set()))
+            user_count = bot_stats.get(uname, {}).get("user_count", 0)
             bot_text += f"{idx}. @{uname} - 👥 {user_count} users\n"
         
         # Create navigation buttons
@@ -391,7 +464,7 @@ async def dashboard():
                 # Get all bots with their user counts
                 bot_user_counts = []
                 for uname in bots.keys():
-                    user_count = len(bot_stats.get(uname, {}).get("users", set()))
+                    user_count = bot_stats.get(uname, {}).get("user_count", 0)
                     bot_user_counts.append((uname, user_count))
                 
                 # Sort by user count (highest first)
@@ -595,8 +668,18 @@ async def dashboard():
                         )
                         break
                     
-                    # Get users for this specific bot
-                    bot_users = list(bot_stats.get(uname, {}).get("users", set()))
+                    # Get users for this specific bot from file (not memory)
+                    bot_users = []
+                    
+                    # Read users from file instead of keeping in memory
+                    try:
+                        if Path(USER_IDS_FILE).exists():
+                            with open(USER_IDS_FILE, "r") as f:
+                                all_users = set(int(line.strip()) for line in f if line.strip().isdigit())
+                                bot_users = list(all_users)
+                    except Exception as e:
+                        logger.error(f"Error reading user IDs: {e}")
+                        bot_users = list(user_ids)  # Fallback to memory
                     
                     if not bot_users:
                         continue
@@ -765,6 +848,58 @@ async def dashboard():
             except Exception as e:
                 logger.error(f"Error closing dashboard session: {e}")
 
+async def cleanup_resources():
+    """Periodic cleanup of resources - AGGRESSIVE for Heroku"""
+    while True:
+        try:
+            await asyncio.sleep(CLEANUP_INTERVAL)
+            
+            logger.info("🧹 Starting aggressive memory cleanup...")
+            
+            # Flush pending user IDs
+            flush_pending_user_ids()
+            
+            # Clear user_ids set if too large (keep data in file only)
+            if len(user_ids) > MAX_USER_IDS_IN_MEMORY:
+                logger.warning(f"user_ids set too large ({len(user_ids)}), clearing from memory")
+                user_ids.clear()
+                # Reload limited set
+                load_user_ids()
+            
+            # Log memory usage
+            logger.info(f"Active bots: {len(bots)}, User IDs in memory: {len(user_ids)}")
+            print_resource_usage()
+            
+            # Cleanup completed tasks
+            dead_tasks = []
+            for uname, task in bot_tasks.items():
+                if task.done():
+                    dead_tasks.append(uname)
+            
+            for uname in dead_tasks:
+                logger.info(f"Cleaning up dead task for @{uname}")
+                del bot_tasks[uname]
+                if uname in bots:
+                    try:
+                        bot = bots[uname]
+                        if bot.session and not bot.session.closed:
+                            await bot.session.close()
+                    except Exception as e:
+                        logger.error(f"Error closing bot session for @{uname}: {e}")
+                    del bots[uname]
+                if uname in bot_stats:
+                    del bot_stats[uname]
+            
+            if dead_tasks:
+                logger.info(f"Cleaned up {len(dead_tasks)} dead bots")
+            
+            # Force garbage collection
+            collected = gc.collect()
+            logger.info(f"🗑️ Garbage collected: {collected} objects")
+                
+        except Exception as e:
+            logger.error(f"Error in cleanup: {e}")
+
 async def main():
     try:
         load_user_ids()
@@ -773,6 +908,9 @@ async def main():
         if not all_tokens:
             logger.warning("No tokens found!")
         
+        # Start cleanup task
+        asyncio.create_task(cleanup_resources())
+        
         asyncio.create_task(dashboard())
         await startup_bots(all_tokens)
         
@@ -780,6 +918,9 @@ async def main():
             await asyncio.sleep(3600)
     except Exception as e:
         logger.error(f"Main error: {e}")
+    finally:
+        # Flush pending user IDs on shutdown
+        flush_pending_user_ids()
 
 if __name__ == "__main__":
     try:
