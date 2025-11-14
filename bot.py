@@ -34,7 +34,7 @@ BOTS_PER_PAGE = 50
 # Mongo-persisted defaults
 MAX_BOTS_LIMIT = 100
 
-# Updated Custom Reply with new channels and bots from Linkzwallah.com
+
 CUSTOM_REPLY_TEXT = """
 🎬 LINKZWALLAH - YOUR ULTIMATE TELEGRAM HUB 🔗
 ✨ Premium Channels, Movies & Entertainment All in One Place!
@@ -83,7 +83,6 @@ CUSTOM_REPLY_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
     # Contact
     [InlineKeyboardButton(text="📬 Contact Admin", url="https://t.me/NeonGhost")]
 ])
-
 user_ids = set()             # user_id (int)
 bots = {}                    # username -> Bot instance
 bot_stats = {}               # username -> {'messages': int, 'users': set}
@@ -223,14 +222,13 @@ def get_stats():
         total_bots = len(bots)
         total_messages = sum(stat["messages"] for stat in bot_stats.values())
         return (
-            f"📊 LINKZWALLAH SYSTEM STATISTICS\n"
+            f"📊 SYSTEM STATISTICS\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🤖 Bots Running: {total_bots}/{MAX_BOTS_LIMIT}\n"
             f"📈 Available Slots: {MAX_BOTS_LIMIT - total_bots}\n"
             f"👥 Total Users (all bots): {total_users}\n"
             f"📨 Total Messages: {total_messages}\n"
-            f"💻 {get_resource_usage_str()}\n"
-            f"🌐 Website: linkzwallah.netlify.app"
+            f"💻 {get_resource_usage_str()}"
         )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
@@ -392,7 +390,7 @@ async def dashboard():
                 await msg.answer("Unauthorized.")
                 return
             await msg.answer(
-                "🎛️ LINKZWALLAH DASHBOARD\n"
+                "🎛️ DASHBOARD COMMANDS\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "/stats - Show statistics\n"
                 "/bots - List all bots (paginated)\n"
@@ -400,9 +398,8 @@ async def dashboard():
                 "/capacity - Check VPS/Heroku capacity\n"
                 "/setlimit <number> - Set bot limit\n"
                 "/gettoken @botname - Get bot token\n"
-                "/broadcast <msg> - Broadcast message\n"
-                "\n📤 Send a .txt file to upload tokens.\n"
-                "🌐 Website: linkzwallah.netlify.app"
+                "/broadcast <msg> or reply a message with /broadcast to broadcast\n"
+                "\n📤 Send a .txt file to upload tokens."
             )
 
         @dp.message(Command("stats"))
@@ -450,7 +447,7 @@ async def dashboard():
                 f"💡 Recommendation:\n"
             )
             if capacity['current_limit'] > capacity['estimated_capacity']:
-                response += f"   ⚠️ Current limit ({capacity['current_limit']}) exceeds estimated capacity ({capacity['estimated_capacity']})!\n"
+                response += f"   ⚠️ Current limit ({capacity['current_limit']}) exceeds estimated capacity!\n"
                 response += f"   🎯 Recommended limit: {capacity['estimated_capacity']} bots\n"
                 response += f"   Use /setlimit {capacity['estimated_capacity']} for optimal performance"
             elif capacity['available_slots'] < 50:
@@ -553,7 +550,6 @@ async def dashboard():
                 return
             bot_username = args[1].strip().lstrip('@')
             found_token = None
-            bot_instance = None
             async for doc in db.tokens.find({}):
                 try:
                     bot_instance = Bot(doc["token"])
@@ -621,6 +617,7 @@ async def dashboard():
                     message_text = msg.reply_to_message.text
                 elif msg.reply_to_message.caption:
                     message_text = msg.reply_to_message.caption
+                # For media, you can send msg.reply_to_message.photo/file etc. if needed
             else:
                 txt = msg.text.split(None, 1)
                 if len(txt) < 2:
@@ -653,18 +650,15 @@ async def dashboard():
             bots_processed = 0
             for uname, bot_instance in bots.items():
                 if broadcast_cancelled:
-                    try:
-                        await dashboard_bot.edit_message_text(
-                            chat_id=msg.chat.id,
-                            message_id=status_msg.message_id,
-                            text=f"🛑 BROADCAST CANCELLED\n"
-                                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                 f"✅ Successful: {total_successful}\n"
-                                 f"❌ Failed: {total_failed}\n"
-                                 f"🤖 Bots Processed: {bots_processed}/{len(bots)}"
-                        )
-                    except Exception:
-                        pass
+                    await dashboard_bot.edit_message_text(
+                        chat_id=msg.chat.id,
+                        message_id=status_msg.message_id,
+                        text=f"🛑 BROADCAST CANCELLED\n"
+                             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                             f"✅ Successful: {total_successful}\n"
+                             f"❌ Failed: {total_failed}\n"
+                             f"🤖 Bots Processed: {bots_processed}/{len(bots)}"
+                    )
                     break
                 bot_users = list(bot_stats.get(uname, {}).get("users", set()))
                 if not bot_users:
