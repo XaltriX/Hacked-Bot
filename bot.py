@@ -24,7 +24,7 @@ db = mongo_client[DB_NAME]
 # --- Constants (replace with your real tokens!)
 TOKEN_FILES = ["token1.txt"]  # Text files not used with MongoDB, but can be left for fallback
 ADMIN_ID = 5706788169
-DASHBOARD_TOKEN = "7557269432:AAHq7cpGtdwM-8AMgtJKRVXTWoJP2l4E200"
+DASHBOARD_TOKEN = "7557269432:AAF1scybLhu5sX4E6xkktd5jGXtCFzOz1n0"
 BATCH_SIZE = 50
 DELAY_BETWEEN_BATCHES = 10
 MAX_RETRIES = 3
@@ -450,7 +450,7 @@ async def dashboard():
                 f"💡 Recommendation:\n"
             )
             if capacity['current_limit'] > capacity['estimated_capacity']:
-                response += f"   ⚠️ Current limit ({capacity['current_limit']}) exceeds estimated capacity!\n"
+                response += f"   ⚠️ Current limit ({capacity['current_limit']}) exceeds estimated capacity ({capacity['estimated_capacity']})!\n"
                 response += f"   🎯 Recommended limit: {capacity['estimated_capacity']} bots\n"
                 response += f"   Use /setlimit {capacity['estimated_capacity']} for optimal performance"
             elif capacity['available_slots'] < 50:
@@ -653,15 +653,18 @@ async def dashboard():
             bots_processed = 0
             for uname, bot_instance in bots.items():
                 if broadcast_cancelled:
-                    await dashboard_bot.edit_message_text(
-                        chat_id=msg.chat.id,
-                        message_id=status_msg.message_id,
-                        text=f"🛑 BROADCAST CANCELLED\n"
-                             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                             f"✅ Successful: {total_successful}\n"
-                             f"❌ Failed: {total_failed}\n"
-                             f"🤖 Bots Processed: {bots_processed}/{len(bots)}"
-                    )
+                    try:
+                        await dashboard_bot.edit_message_text(
+                            chat_id=msg.chat.id,
+                            message_id=status_msg.message_id,
+                            text=f"🛑 BROADCAST CANCELLED\n"
+                                 f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                 f"✅ Successful: {total_successful}\n"
+                                 f"❌ Failed: {total_failed}\n"
+                                 f"🤖 Bots Processed: {bots_processed}/{len(bots)}"
+                        )
+                    except Exception:
+                        pass
                     break
                 bot_users = list(bot_stats.get(uname, {}).get("users", set()))
                 if not bot_users:
@@ -757,7 +760,7 @@ async def dashboard():
                         f"🤖 Total active: {len(bots)}/{MAX_BOTS_LIMIT}\n"
                         f"📊 Available slots: {MAX_BOTS_LIMIT - len(bots)}"
                     )
-                elif msg.text and re.match(r'^\d{6,10}:[A-Za-z0-9_-]{20,}, msg.text.strip()):
+                elif msg.text and re.match(r'^\d{6,10}:[A-Za-z0-9_-]{20,}$', msg.text.strip()):
                     token = msg.text.strip()
                     if len(bots) >= MAX_BOTS_LIMIT:
                         await msg.answer(
@@ -815,3 +818,4 @@ if __name__ == "__main__":
         logger.info("Shutting down...")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
+
