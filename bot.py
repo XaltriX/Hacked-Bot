@@ -24,7 +24,7 @@ db = mongo_client[DB_NAME]
 # --- Constants (replace with your real tokens!)
 TOKEN_FILES = ["token1.txt"]  # Text files not used with MongoDB, but can be left for fallback
 ADMIN_ID = 5706788169
-DASHBOARD_TOKEN = "7557269432:AAF1scybLhu5sX4E6xkktd5jGXtCFzOz1n0"
+DASHBOARD_TOKEN = "7557269432:AAHq7cpGtdwM-8AMgtJKRVXTWoJP2l4E200"
 BATCH_SIZE = 50
 DELAY_BETWEEN_BATCHES = 10
 MAX_RETRIES = 3
